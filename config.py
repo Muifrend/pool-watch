@@ -1,4 +1,13 @@
 """Configuration for the pool-watch Stage 1/2/3 pipeline."""
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+NTFY_TOPIC = os.getenv("NTFY_TOPIC")
+
 
 video_path = "pool_video.mp4"
 pose_landmarker_model_path = "pose_landmarker_lite.task"
@@ -16,11 +25,11 @@ h3_persistence_min_passes = 20
 h5_persistence_window_frames = 30
 h5_persistence_min_passes = 6
 
-nebius_api_key = ""
+nebius_api_key = NEBIUS_API_KEY
 nebius_model = "Qwen/Qwen2.5-VL-72B-Instruct"
 nebius_base_url = "https://api.studio.nebius.com/v1/chat/completions"
 
-openrouter_api_key = ""
+openrouter_api_key = OPENROUTER_API_KEY
 openrouter_model = "openai/gpt-4o-mini"
 vlm_provider = "nebius"
 
