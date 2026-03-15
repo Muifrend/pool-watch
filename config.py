@@ -30,13 +30,21 @@ nebius_model = "Qwen/Qwen2.5-VL-72B-Instruct"
 nebius_base_url = "https://api.studio.nebius.com/v1/chat/completions"
 
 openrouter_api_key = OPENROUTER_API_KEY
-openrouter_model = "openai/gpt-4o-mini"
-vlm_provider = "nebius"
+openrouter_model = "qwen/qwen2.5-vl-32b-instruct"
+openrouter_base_url = "https://openrouter.ai/api/v1/chat/completions"
+vlm_provider = "openrouter"
 
-vlm_frame_size = 768
+# Set to None (or <= 0) to send the full original frame to the VLM.
+vlm_frame_size = None
 vlm_timeout_seconds = 20
 confidence_threshold = 0.7
 ntfy_topic = "pool-watch-alerts"
+
+VERDICT_CONFIDENCE_MAP = {
+    "YES": 1.0,
+    "NO": 0.0,
+    "UNSURE": 0.5,
+}
 
 demo_loop_start = 0.0
 demo_loop_end = 14.0

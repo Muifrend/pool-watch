@@ -60,6 +60,8 @@ class HeuristicResult:
     confidence: float
     active_count: int
     heuristic_scores: Dict[str, float]
+    frame_index: int = -1
+    timestamp_sec: float = -1.0
     frame_heuristics: Dict[str, str] = field(default_factory=dict)
     status: str = STATUS_DETERMINED
 

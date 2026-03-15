@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Generator, Optional, Tuple
 
 import cv2
@@ -8,6 +8,7 @@ import numpy as np
 
 import config
 from detector import HeuristicResult, Stage1Detector
+from vlm import Stage2Confirmer
 
 
 @dataclass
@@ -49,12 +50,19 @@ class VideoRunner:
                     logical_frame = loop_start_frame
                     continue
 
+                current_frame_index = logical_frame
                 should_process = ((logical_frame - loop_start_frame) % (self.frame_skip + 1)) == 0
                 logical_frame += 1
                 if not should_process:
                     continue
 
                 result = detector.process_frame(frame)
+                if isinstance(result, HeuristicResult):
+                    result = replace(
+                        result,
+                        frame_index=current_frame_index,
+                        timestamp_sec=current_frame_index / fps,
+                    )
                 emitted += 1
                 yield frame, result
         finally:
@@ -105,10 +113,15 @@ def run_stage1(
 
 
 def main() -> None:
-    for _, result in run_stage1(max_frames=300):
+    confirmer = Stage2Confirmer(config)
+    for frame, result in run_stage1(max_frames=300):
         if result.flag:
-            fired = ", ".join(result.fired_heuristics)
-            print(f"[Stage1 FLAG] confidence={result.confidence:.2f} fired={fired}")
+            stage2 = confirmer.confirm(frame, result)
+            print(
+                f"[Stage2] verdict={stage2.verdict} conf={stage2.confidence:.2f} "
+                f"provider={stage2.provider_used} t={stage2.timestamp_sec:.2f}s "
+                f"raw={stage2.raw_response}"
+            )
 
 
 if __name__ == "__main__":

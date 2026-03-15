@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import cv2
 import numpy as np
 
+from detector import HeuristicResult
 from main import VideoRunner
 
 
@@ -72,6 +73,47 @@ class VideoRunnerTests(unittest.TestCase):
         self.assertTrue(np.array_equal(detector.frames[1], frames[2]))
         self.assertTrue(np.array_equal(detector.frames[2], frames[4]))
         self.assertEqual(mock_cap.release.call_count, 1)
+
+    @patch("main.cv2.VideoCapture")
+    def test_runner_populates_frame_index_and_timestamp(self, mock_capture_cls):
+        frame_a = np.zeros((8, 8, 3), dtype=np.uint8)
+        frame_b = np.ones((8, 8, 3), dtype=np.uint8)
+
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.read.side_effect = [(True, frame_a), (True, frame_b)]
+
+        def get_side_effect(prop):
+            if prop == cv2.CAP_PROP_FPS:
+                return 10.0
+            return 0.0
+
+        mock_cap.get.side_effect = get_side_effect
+        mock_capture_cls.return_value = mock_cap
+
+        class ResultDetector:
+            def process_frame(self, _frame):
+                return HeuristicResult(
+                    flag=False,
+                    fired_heuristics=[],
+                    confidence=0.0,
+                    active_count=0,
+                    heuristic_scores={},
+                )
+
+        outputs = list(
+            VideoRunner(video_path="pool_video.mp4").run(
+                detector=ResultDetector(),
+                max_frames=2,
+            )
+        )
+        result0 = outputs[0][1]
+        result1 = outputs[1][1]
+
+        self.assertEqual(result0.frame_index, 0)
+        self.assertEqual(result0.timestamp_sec, 0.0)
+        self.assertEqual(result1.frame_index, 1)
+        self.assertAlmostEqual(result1.timestamp_sec, 0.1, places=6)
 
 
 if __name__ == "__main__":
