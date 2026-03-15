@@ -76,6 +76,8 @@ class Stage1DetectorTests(unittest.TestCase):
             "fps": 8,
             "activation_ratio_threshold": 0.6,
             "pose": FakePose(outputs),
+            "persistence_window_frames": {key: 1 for key in HEURISTIC_KEYS},
+            "persistence_min_passes": {key: 1 for key in HEURISTIC_KEYS},
         }
         defaults.update(kwargs)
         return Stage1Detector(**defaults)

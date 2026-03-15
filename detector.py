@@ -76,17 +76,52 @@ class Stage1Detector:
         activation_ratio_threshold: float = 0.6,
         pose: Optional[object] = None,
         pose_model_path: Optional[str] = None,
+        persistence_window_frames: Optional[Dict[str, int]] = None,
+        persistence_min_passes: Optional[Dict[str, int]] = None,
     ) -> None:
         self.visibility_threshold = float(visibility_threshold)
         self.min_heuristics = int(min_heuristics)
         self.activation_ratio_threshold = float(activation_ratio_threshold)
+        self._heuristics_window_seconds = float(heuristics_window_seconds)
 
         effective_fps = fps if fps and fps > 0 else 30.0
+        self._effective_fps = effective_fps
         self._window_size = max(1, int(round(heuristics_window_seconds * effective_fps)))
+        self._h2_recent_window_size = max(
+            6,
+            int(round(min(1.0, self._heuristics_window_seconds) * self._effective_fps)),
+        )
 
         self._heuristics_window: Deque[Dict[str, bool]] = deque(maxlen=self._window_size)
         self._wrist_rel_history: Deque[Optional[float]] = deque(maxlen=self._window_size)
         self._nose_offset_history: Deque[Optional[float]] = deque(maxlen=self._window_size)
+
+        default_window_frames = {
+            "h1_spine_vertical": config.h1_persistence_window_frames,
+            "h2_wrist_oscillation": config.h2_persistence_window_frames,
+            "h3_head_bobbing": config.h3_persistence_window_frames,
+            "h5_head_tilt_back": config.h5_persistence_window_frames,
+        }
+        default_min_passes = {
+            "h1_spine_vertical": config.h1_persistence_min_passes,
+            "h2_wrist_oscillation": config.h2_persistence_min_passes,
+            "h3_head_bobbing": config.h3_persistence_min_passes,
+            "h5_head_tilt_back": config.h5_persistence_min_passes,
+        }
+        self._persistence_window_frames = (
+            dict(persistence_window_frames)
+            if persistence_window_frames is not None
+            else default_window_frames
+        )
+        self._persistence_min_passes = (
+            dict(persistence_min_passes)
+            if persistence_min_passes is not None
+            else default_min_passes
+        )
+        self._validate_persistence_config()
+        self._persistence_history = {
+            key: deque(maxlen=self._persistence_window_frames[key]) for key in HEURISTIC_KEYS
+        }
 
         model_path = pose_model_path or config.pose_landmarker_model_path
         self._pose = pose if pose is not None else self._build_default_pose(model_path)
@@ -103,8 +138,9 @@ class Stage1Detector:
         people_landmarks = list(getattr(pose_output, "pose_landmarks", []) or [])
         landmarks = people_landmarks[0] if people_landmarks else None
 
-        frame_state = self._compute_heuristics(landmarks)
-        self._heuristics_window.append(frame_state)
+        raw_frame_state = self._compute_heuristics(landmarks)
+        smoothed_frame_state = self._apply_persistence(raw_frame_state)
+        self._heuristics_window.append(smoothed_frame_state)
 
         scores = self._compute_activation_scores()
         fired_heuristics = [
@@ -119,7 +155,7 @@ class Stage1Detector:
             frame_heuristics = {key: "indeterminate" for key in HEURISTIC_KEYS}
         else:
             frame_heuristics = {
-                key: ("pass" if frame_state[key] else "fail") for key in HEURISTIC_KEYS
+                key: ("pass" if smoothed_frame_state[key] else "fail") for key in HEURISTIC_KEYS
             }
 
         return HeuristicResult(
@@ -131,6 +167,38 @@ class Stage1Detector:
             frame_heuristics=frame_heuristics,
             status=status,
         )
+
+    def _validate_persistence_config(self) -> None:
+        missing_window = [k for k in HEURISTIC_KEYS if k not in self._persistence_window_frames]
+        missing_min = [k for k in HEURISTIC_KEYS if k not in self._persistence_min_passes]
+        if missing_window or missing_min:
+            raise ValueError(
+                "Persistence config missing heuristics: "
+                f"window_missing={missing_window}, min_missing={missing_min}"
+            )
+
+        for key in HEURISTIC_KEYS:
+            window_n = int(self._persistence_window_frames[key])
+            min_passes = int(self._persistence_min_passes[key])
+            if window_n <= 0:
+                raise ValueError(f"Persistence window must be > 0 for {key}")
+            if min_passes <= 0:
+                raise ValueError(f"Persistence min_passes must be > 0 for {key}")
+            if min_passes > window_n:
+                raise ValueError(
+                    f"Persistence min_passes ({min_passes}) cannot exceed window ({window_n}) for {key}"
+                )
+            self._persistence_window_frames[key] = window_n
+            self._persistence_min_passes[key] = min_passes
+
+    def _apply_persistence(self, frame_state: Dict[str, bool]) -> Dict[str, bool]:
+        smoothed_state: Dict[str, bool] = {}
+        for key in HEURISTIC_KEYS:
+            history = self._persistence_history[key]
+            history.append(bool(frame_state.get(key, False)))
+            pass_count = sum(1 for value in history if value)
+            smoothed_state[key] = pass_count >= self._persistence_min_passes[key]
+        return smoothed_state
 
     def _build_default_pose(self, model_path: str) -> object:
         if mp_python is None or mp_vision is None:
@@ -182,11 +250,15 @@ class Stage1Detector:
         shoulders_mid = self._midpoint(left_shoulder, right_shoulder)
         hips_mid = self._midpoint(left_hip, right_hip)
         wrists_mid = self._midpoint(left_wrist, right_wrist)
-        ears_mid = self._midpoint(left_ear, right_ear)
 
         wrist_rel: Optional[float] = None
-        if shoulders_mid is not None and wrists_mid is not None:
-            wrist_rel = wrists_mid[1] - shoulders_mid[1]
+        if shoulders_mid is not None:
+            if wrists_mid is not None:
+                wrist_rel = wrists_mid[1] - shoulders_mid[1]
+            elif left_wrist is not None:
+                wrist_rel = left_wrist[1] - shoulders_mid[1]
+            elif right_wrist is not None:
+                wrist_rel = right_wrist[1] - shoulders_mid[1]
         self._wrist_rel_history.append(wrist_rel)
 
         nose_offset: Optional[float] = None
@@ -200,7 +272,8 @@ class Stage1Detector:
             "h3_head_bobbing": self._is_head_bobbing(),
             "h5_head_tilt_back": self._is_head_tilt_back(
                 nose=nose,
-                ears_mid=ears_mid,
+                left_ear=left_ear,
+                right_ear=right_ear,
                 left_shoulder=left_shoulder,
                 right_shoulder=right_shoulder,
                 shoulders_mid=shoulders_mid,
@@ -244,12 +317,13 @@ class Stage1Detector:
         if wrist_rel is None:
             return False
 
-        values = [value for value in self._wrist_rel_history if value is not None]
+        recent_values = list(self._wrist_rel_history)[-self._h2_recent_window_size :]
+        values = [value for value in recent_values if value is not None]
         if len(values) < 6:
             return False
 
         amplitude = max(values) - min(values)
-        if amplitude < 0.03:
+        if amplitude < 0.015:
             return False
 
         signs: List[int] = []
@@ -261,7 +335,7 @@ class Stage1Detector:
             return False
 
         sign_changes = sum(1 for prev, nxt in zip(signs, signs[1:]) if prev != nxt)
-        at_shoulder_level = abs(wrist_rel) <= 0.08
+        at_shoulder_level = abs(wrist_rel) <= 0.14
         return at_shoulder_level and sign_changes >= 2
 
     def _is_head_bobbing(self) -> bool:
@@ -273,24 +347,38 @@ class Stage1Detector:
     @staticmethod
     def _is_head_tilt_back(
         nose: Optional[LandmarkPoint],
-        ears_mid: Optional[LandmarkPoint],
+        left_ear: Optional[LandmarkPoint],
+        right_ear: Optional[LandmarkPoint],
         left_shoulder: Optional[LandmarkPoint],
         right_shoulder: Optional[LandmarkPoint],
         shoulders_mid: Optional[LandmarkPoint],
     ) -> bool:
         if (
             nose is None
-            or ears_mid is None
-            or left_shoulder is None
-            or right_shoulder is None
-            or shoulders_mid is None
         ):
             return False
 
-        shoulders_level = abs(left_shoulder[1] - right_shoulder[1]) <= 0.08
-        nose_above_ears = nose[1] + 0.02 < ears_mid[1]
-        nose_above_shoulders = nose[1] + 0.08 < shoulders_mid[1]
-        return shoulders_level and nose_above_ears and nose_above_shoulders
+        ear_candidates = [ear[1] for ear in (left_ear, right_ear) if ear is not None]
+        if not ear_candidates:
+            return False
+        ear_reference_y = sum(ear_candidates) / len(ear_candidates)
+
+        shoulder_candidates = [s[1] for s in (left_shoulder, right_shoulder) if s is not None]
+        if shoulders_mid is not None:
+            shoulder_reference_y = shoulders_mid[1]
+        elif shoulder_candidates:
+            shoulder_reference_y = sum(shoulder_candidates) / len(shoulder_candidates)
+        else:
+            return False
+
+        if left_shoulder is not None and right_shoulder is not None:
+            shoulders_level = abs(left_shoulder[1] - right_shoulder[1]) <= 0.12
+        else:
+            shoulders_level = True
+
+        nose_near_or_above_ears = nose[1] <= ear_reference_y + 0.03
+        nose_above_shoulders = nose[1] + 0.03 < shoulder_reference_y
+        return shoulders_level and nose_near_or_above_ears and nose_above_shoulders
 
     def _compute_activation_scores(self) -> Dict[str, float]:
         if not self._heuristics_window:

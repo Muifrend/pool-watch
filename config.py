@@ -6,6 +6,16 @@ visibility_threshold = 0.6
 heuristics_window_seconds = 3.0
 min_heuristics = 3
 
+# Per-heuristic persistence (N = trailing frames, X = min passes in that N).
+h1_persistence_window_frames = 45
+h1_persistence_min_passes = 20
+h2_persistence_window_frames = 60
+h2_persistence_min_passes = 2
+h3_persistence_window_frames = 45
+h3_persistence_min_passes = 20
+h5_persistence_window_frames = 30
+h5_persistence_min_passes = 6
+
 nebius_api_key = ""
 nebius_model = "Qwen/Qwen2.5-VL-72B-Instruct"
 nebius_base_url = "https://api.studio.nebius.com/v1/chat/completions"
