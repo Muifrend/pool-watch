@@ -68,6 +68,26 @@ Sidecar JSON fields:
 `stage1_fired_heuristics`
 `stage1_scores`
 
+## Future Toloka Integration (Hour 3 Stub + Early Glue)
+Planned Hour 3 scope is a Toloka-ready stub, not a real Toloka API integration yet.
+
+Stub behavior:
+1. Save `UNSURE` frames locally to `uncertain_frames/`.
+2. Include timestamp and confidence in filename.
+3. Keep sidecar JSON metadata for later labeling and review.
+
+Routing logic (early 3-stage glue in one script):
+1. MediaPipe Stage 1 flags distress.
+2. Qwen2-VL (Stage 2) confirms verdict.
+3. Stage 3 routes:
+`YES` -> send alert.
+`UNSURE` -> save to `uncertain_frames/`.
+`NO` -> reset / no-op.
+
+Hour 3 should include initial end-to-end wiring across Stage 1, Stage 2, and Stage 3 so Hour 4 is not blocked by first-time integration work.
+
+`uncertain_frames/` acts as an automatically collected future fine-tuning dataset.
+
 ## Troubleshooting
 - No ntfy alert:
 1. Confirm Stage 2 actually returns `YES` (alerts are sent only on `YES`).
