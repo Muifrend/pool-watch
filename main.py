@@ -8,6 +8,7 @@ import numpy as np
 
 import config
 from detector import HeuristicResult, Stage1Detector
+from stage3 import NtfyNotifier, UncertainFrameQueue, handle_stage3
 from vlm import Stage2Confirmer
 
 
@@ -114,13 +115,23 @@ def run_stage1(
 
 def main() -> None:
     confirmer = Stage2Confirmer(config)
+    notifier = NtfyNotifier(config)
+    queue = UncertainFrameQueue()
+
     for frame, result in run_stage1(max_frames=300):
         if result.flag:
             stage2 = confirmer.confirm(frame, result)
+            stage3_action = handle_stage3(
+                frame=frame,
+                stage1_result=result,
+                stage2_result=stage2,
+                notifier=notifier,
+                queue=queue,
+            )
             print(
                 f"[Stage2] verdict={stage2.verdict} conf={stage2.confidence:.2f} "
                 f"provider={stage2.provider_used} t={stage2.timestamp_sec:.2f}s "
-                f"raw={stage2.raw_response}"
+                f"raw={stage2.raw_response} stage3={stage3_action}"
             )
 
 

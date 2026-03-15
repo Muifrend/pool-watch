@@ -5,7 +5,9 @@ import cv2
 import numpy as np
 
 from detector import HeuristicResult
+import main as main_module
 from main import VideoRunner
+from vlm import Stage2Result
 
 
 class StubDetector:
@@ -114,6 +116,60 @@ class VideoRunnerTests(unittest.TestCase):
         self.assertEqual(result0.timestamp_sec, 0.0)
         self.assertEqual(result1.frame_index, 1)
         self.assertAlmostEqual(result1.timestamp_sec, 0.1, places=6)
+
+    @patch("main.handle_stage3")
+    @patch("main.UncertainFrameQueue")
+    @patch("main.NtfyNotifier")
+    @patch("main.Stage2Confirmer")
+    @patch("main.run_stage1")
+    def test_main_routes_only_flagged_frames_into_stage2_stage3(
+        self,
+        mock_run_stage1,
+        mock_confirmer_cls,
+        mock_notifier_cls,
+        mock_queue_cls,
+        mock_handle_stage3,
+    ):
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        flagged = HeuristicResult(
+            flag=True,
+            fired_heuristics=["h1_spine_vertical"],
+            confidence=0.9,
+            active_count=1,
+            heuristic_scores={"h1_spine_vertical": 1.0},
+        )
+        not_flagged = HeuristicResult(
+            flag=False,
+            fired_heuristics=[],
+            confidence=0.0,
+            active_count=0,
+            heuristic_scores={"h1_spine_vertical": 0.0},
+        )
+        mock_run_stage1.return_value = iter([(frame, flagged), (frame, not_flagged)])
+
+        stage2_result = Stage2Result(
+            verdict="YES",
+            confidence=0.01,
+            raw_response="YES",
+            frame_index=4,
+            timestamp_sec=1.2,
+            provider_used="nebius",
+        )
+        confirmer = mock_confirmer_cls.return_value
+        confirmer.confirm.return_value = stage2_result
+        mock_handle_stage3.return_value = "ALERT_SENT"
+
+        main_module.main()
+
+        mock_run_stage1.assert_called_once_with(max_frames=300)
+        confirmer.confirm.assert_called_once_with(frame, flagged)
+        mock_handle_stage3.assert_called_once_with(
+            frame=frame,
+            stage1_result=flagged,
+            stage2_result=stage2_result,
+            notifier=mock_notifier_cls.return_value,
+            queue=mock_queue_cls.return_value,
+        )
 
 
 if __name__ == "__main__":

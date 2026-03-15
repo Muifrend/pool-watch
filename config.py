@@ -38,7 +38,7 @@ vlm_provider = "openrouter"
 vlm_frame_size = None
 vlm_timeout_seconds = 20
 confidence_threshold = 0.7
-ntfy_topic = "pool-watch-alerts"
+ntfy_topic = NTFY_TOPIC or "pool-watch-alerts"
 
 VERDICT_CONFIDENCE_MAP = {
     "YES": 1.0,
